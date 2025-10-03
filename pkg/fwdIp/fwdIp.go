@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"net"
 	"os"
-	"strconv"
 	"strings"
 	"sync"
 
@@ -23,6 +22,7 @@ type ForwardIPOpts struct {
 	Port                     string
 	ForwardConfigurationPath string
 	ForwardIPReservations    []string
+	BaseUnreservedIP         string
 }
 
 // Registry is a structure to create and hold all of the
@@ -92,17 +92,47 @@ func determineIP(regKey string, opts ForwardIPOpts) net.IP {
 		ipRegistry.inc[opts.ClusterN] = map[int]int{0: 0}
 	}
 
-	// bounds check
-	if opts.ClusterN > 255 ||
-		opts.NamespaceN > 255 ||
-		ipRegistry.inc[opts.ClusterN][opts.NamespaceN] > 255 {
-		panic("IP generation has run out of bounds.")
-	}
+	// Create a copy of the base IP to avoid modifying the original
+	var ip net.IP
 
-	ip := baseUnreservedIP
-	ip[1] += byte(opts.ClusterN)
-	ip[2] += byte(opts.NamespaceN)
-	ip[3] += byte(ipRegistry.inc[opts.ClusterN][opts.NamespaceN])
+	if ipv4 := baseUnreservedIP.To4(); ipv4 != nil {
+		// IPv4 logic - work with 4-byte representation
+		ip = make(net.IP, 4)
+		copy(ip, ipv4)
+
+		if opts.ClusterN > 255 ||
+			opts.NamespaceN > 255 ||
+			ipRegistry.inc[opts.ClusterN][opts.NamespaceN] > 255 {
+			panic("IPv4 generation has run out of bounds.")
+		}
+
+		ip[1] += byte(opts.ClusterN)
+		ip[2] += byte(opts.NamespaceN)
+		ip[3] += byte(ipRegistry.inc[opts.ClusterN][opts.NamespaceN])
+	} else {
+		// IPv6 logic - work with 16-byte representation
+		ip = make(net.IP, 16)
+		copy(ip, baseUnreservedIP)
+
+		if opts.ClusterN > 65535 ||
+			opts.NamespaceN > 65535 ||
+			ipRegistry.inc[opts.ClusterN][opts.NamespaceN] > 65535 {
+			panic("IPv6 generation has run out of bounds.")
+		}
+
+		// For IPv6, modify the interface identifier portion (last 64 bits)
+		// Use bytes 8-13 for our allocation scheme, preserving bytes 14-15
+		clusterBytes := uint16(opts.ClusterN)
+		namespaceBytes := uint16(opts.NamespaceN)
+		serviceBytes := uint16(ipRegistry.inc[opts.ClusterN][opts.NamespaceN])
+		
+		ip[8] = byte(clusterBytes >> 8)
+		ip[9] = byte(clusterBytes & 0xFF)
+		ip[10] = byte(namespaceBytes >> 8)
+		ip[11] = byte(namespaceBytes & 0xFF)
+		ip[12] = byte(serviceBytes >> 8)
+		ip[13] = byte(serviceBytes & 0xFF)
+	}
 
 	ipRegistry.inc[opts.ClusterN][opts.NamespaceN]++
 	if err := addToRegistry(regKey, opts, ip); err != nil {
@@ -136,25 +166,12 @@ func addToRegistry(regKey string, opts ForwardIPOpts, ip net.IP) error {
 }
 
 func ipFromString(ipStr string) (net.IP, error) {
-	ipParts := strings.Split(ipStr, ".")
-
-	octet0, err := strconv.Atoi(ipParts[0])
-	if err != nil {
-		return nil, fmt.Errorf("Unable to parse BaseIP octet 0")
+	// Try parsing as both IPv4 and IPv6
+	ip := net.ParseIP(ipStr)
+	if ip == nil {
+		return nil, fmt.Errorf("Unable to parse IP address: %s", ipStr)
 	}
-	octet1, err := strconv.Atoi(ipParts[1])
-	if err != nil {
-		return nil, fmt.Errorf("Unable to parse BaseIP octet 1")
-	}
-	octet2, err := strconv.Atoi(ipParts[2])
-	if err != nil {
-		return nil, fmt.Errorf("Unable to parse BaseIP octet 2")
-	}
-	octet3, err := strconv.Atoi(ipParts[3])
-	if err != nil {
-		return nil, fmt.Errorf("Unable to parse BaseIP octet 3")
-	}
-	return net.IP{byte(octet0), byte(octet1), byte(octet2), byte(octet3)}.To4(), nil
+	return ip, nil
 }
 
 func hasConflictingReservations(opts ForwardIPOpts, wantIP string) *ServiceConfiguration {
@@ -170,7 +187,23 @@ func hasConflictingReservations(opts ForwardIPOpts, wantIP string) *ServiceConfi
 	return nil
 }
 
-func getBaseUnreservedIP(opts ForwardIPOpts) []byte {
+func getBaseUnreservedIP(opts ForwardIPOpts) net.IP {
+	// Check if BaseUnreservedIP is provided via CLI first
+	if opts.BaseUnreservedIP != "" {
+		ip, err := ipFromString(opts.BaseUnreservedIP)
+		if err != nil {
+			log.Fatal(fmt.Errorf("Invalid BaseUnreservedIP provided: %s - %v", opts.BaseUnreservedIP, err))
+		}
+		// Validate the CLI-provided IP
+		if !isValidForwardingIP(ip) {
+			log.Fatal(fmt.Errorf("BaseUnreservedIP %s is not suitable for port forwarding:\n"+
+				"  IPv4: Use 127.0.0.0/8 (loopback)\n"+
+				"  IPv6: Use fc00::/7 (unique local) or fe80::/10 (link-local)", opts.BaseUnreservedIP))
+		}
+		return ip
+	}
+
+	// Fall back to configuration file
 	fwdCfg := getForwardConfiguration(opts)
 	ip, err := ipFromString(fwdCfg.BaseUnreservedIP)
 	if err != nil {
@@ -189,15 +222,45 @@ func getConfigurationForService(opts ForwardIPOpts) *ServiceConfiguration {
 	return nil
 }
 
-func blockNonLoopbackIPs(f *ForwardConfiguration) {
-	if ip, err := ipFromString(f.BaseUnreservedIP); err != nil || !ip.IsLoopback() {
-		panic("BaseUnreservedIP is not in the range 127.0.0.0/8")
+func blockNonLocalIPs(f *ForwardConfiguration) {
+	if ip, err := ipFromString(f.BaseUnreservedIP); err != nil || !isValidForwardingIP(ip) {
+		panic("BaseUnreservedIP must be a valid forwarding address:\n" +
+			"  IPv4: 127.0.0.0/8 (loopback)\n" +
+			"  IPv6: fc00::/7 (unique local) or fe80::/10 (link-local)")
 	}
 	for _, svcCfg := range f.ServiceConfigurations {
-		if ip, err := ipFromString(svcCfg.IP); err != nil || !ip.IsLoopback() {
-			log.Fatal(fmt.Sprintf("IP %s for %s is not in the range 127.0.0.0/8", svcCfg.IP, svcCfg.Name))
+		if ip, err := ipFromString(svcCfg.IP); err != nil || !isValidForwardingIP(ip) {
+			log.Fatal(fmt.Sprintf("IP %s for %s must be a valid forwarding address (see BaseUnreservedIP requirements)", svcCfg.IP, svcCfg.Name))
 		}
 	}
+}
+
+// isValidForwardingIP checks if an IP is suitable for port forwarding via loopback aliases
+func isValidForwardingIP(ip net.IP) bool {
+	if ip == nil {
+		return false
+	}
+	
+	// IPv4: Accept loopback addresses (127.0.0.0/8) on all platforms
+	if ipv4 := ip.To4(); ipv4 != nil {
+		return ip.IsLoopback()
+	}
+	
+	// IPv6: Only accept ranges that actually work for ifconfig aliasing
+	
+	// Check for unique local addresses (fc00::/7) - these work
+	if len(ip) >= 1 && (ip[0]&0xfe) == 0xfc {
+		return true
+	}
+	
+	// Check for link-local addresses (fe80::/10) - these work 
+	if ip.IsLinkLocalUnicast() {
+		return true
+	}
+	
+	// Reject all other IPv6 addresses including IPv6 loopback range (::x)
+	// as they cannot be aliased on macOS loopback interface
+	return false
 }
 
 func notifyOfDuplicateIPReservations(f *ForwardConfiguration) {
@@ -212,7 +275,7 @@ func notifyOfDuplicateIPReservations(f *ForwardConfiguration) {
 }
 
 func validateForwardConfiguration(f *ForwardConfiguration) {
-	blockNonLoopbackIPs(f)
+	blockNonLocalIPs(f)
 	notifyOfDuplicateIPReservations(f)
 }
 

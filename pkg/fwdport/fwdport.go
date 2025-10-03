@@ -201,7 +201,11 @@ func (pfo *PortForwardOpts) PortForward() error {
 
 	var address []string
 	if pfo.LocalIp != nil {
-		address = []string{pfo.LocalIp.To4().String(), pfo.LocalIp.To16().String()}
+		if ipv4 := pfo.LocalIp.To4(); ipv4 != nil {
+			address = []string{ipv4.String()}
+		} else {
+			address = []string{pfo.LocalIp.String()}
+		}
 	} else {
 		address = []string{"localhost"}
 	}

@@ -79,6 +79,7 @@ type ServiceFWD struct {
 
 	ForwardConfigurationPath string   // file path to IP reservation configuration
 	ForwardIPReservations    []string // cli passed IP reservations
+	BaseUnreservedIP         string   // cli passed base unreserved IP
 }
 
 /*
@@ -252,6 +253,7 @@ func (svcFwd *ServiceFWD) LoopPodsToForward(pods []v1.Pod, includePodNameInHost 
 			Port:                     podPort,
 			ForwardConfigurationPath: svcFwd.ForwardConfigurationPath,
 			ForwardIPReservations:    svcFwd.ForwardIPReservations,
+			BaseUnreservedIP:         svcFwd.BaseUnreservedIP,
 		}
 		localIp, err := fwdnet.ReadyInterface(opts)
 		if err != nil {

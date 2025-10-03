@@ -64,6 +64,7 @@ var fwdConfigurationPath string
 var fwdReservations []string
 var timeout int
 var hostsFilePath string
+var baseUnreservedIP string
 
 func init() {
 	// override error output from k8s.io/apimachinery/pkg/util/runtime
@@ -87,6 +88,7 @@ func init() {
 	Cmd.Flags().StringVarP(&fwdConfigurationPath, "fwd-conf", "z", "", "Define an IP reservation configuration")
 	Cmd.Flags().IntVarP(&timeout, "timeout", "t", 300, "Specify a timeout seconds for the port forwarding.")
 	Cmd.Flags().StringVarP(&hostsFilePath, "hosts-file", "H", "", "Specify a custom hosts file path (default: /etc/hosts)")
+	Cmd.Flags().StringVarP(&baseUnreservedIP, "base-ip", "b", "", "Specify a base unreserved IP address (IPv4: 127.x.x.x, IPv6: fc00::/7 or fe80::/10, e.g., 127.1.27.1 or fc00::1)")
 
 }
 
@@ -512,6 +514,7 @@ func (opts *NamespaceOpts) AddServiceHandler(obj interface{}) {
 		PortMap:                  opts.ParsePortMap(mappings),
 		ForwardConfigurationPath: fwdConfigurationPath,
 		ForwardIPReservations:    fwdReservations,
+		BaseUnreservedIP:         baseUnreservedIP,
 	}
 
 	// Add the service to the catalog of services being forwarded

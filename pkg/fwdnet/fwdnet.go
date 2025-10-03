@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"runtime"
+	"strings"
 
 	"github.com/txn2/kubefwd/pkg/fwdIp"
 )
@@ -41,9 +42,17 @@ func ReadyInterface(opts fwdIp.ForwardIPOpts) (net.IP, error) {
 
 	// check the addresses already assigned to the interface
 	for _, addr := range addrs {
+		var expectedAddr string
+		if ip.To4() != nil {
+			// IPv4 addresses show up as x.x.x.x/8
+			expectedAddr = ip.String() + "/8"
+		} else {
+			// IPv6 addresses show up as xxxx::x/128
+			expectedAddr = ip.String() + "/128"
+		}
 
 		// found a match
-		if addr.String() == ip.String()+"/8" {
+		if addr.String() == expectedAddr {
 			// found ip, now check for unused port
 			conn, err := net.Dial("tcp", ip.String()+":"+opts.Port)
 			if err != nil {
@@ -55,9 +64,16 @@ func ReadyInterface(opts fwdIp.ForwardIPOpts) (net.IP, error) {
 
 	// ip is not in the list of addrs for networkInterface
 	cmd := "ifconfig"
-	args := []string{"lo0", "alias", ip.String(), "up"}
+	var args []string
+	
+	if ip.To4() != nil {
+		args = []string{"lo0", "alias", ip.String(), "up"}
+	} else {
+		args = []string{"lo0", "inet6", ip.String() + "/128", "alias"}
+	}
+	
 	if err := exec.Command(cmd, args...).Run(); err != nil {
-		fmt.Println("Cannot ifconfig lo0 alias " + ip.String() + " up")
+		fmt.Printf("Cannot ifconfig lo0 %s\n", strings.Join(args[1:], " "))
 		fmt.Println("Error: " + err.Error())
 		os.Exit(1)
 	}
@@ -75,12 +91,22 @@ func ReadyInterface(opts fwdIp.ForwardIPOpts) (net.IP, error) {
 // if -alias command get err, just print the error and continue.
 func RemoveInterfaceAlias(ip net.IP) {
 	cmd := "ifconfig"
-	args := []string{"lo0", "-alias", ip.String()}
+	var args []string
+	
+	// Use different syntax for IPv6 vs IPv4 removal
+	if ip.To4() != nil {
+		// IPv4: ifconfig lo0 -alias 127.1.27.1
+		args = []string{"lo0", "-alias", ip.String()}
+	} else {
+		// IPv6: ifconfig lo0 inet6 fc00::1/128 -alias
+		args = []string{"lo0", "inet6", ip.String() + "/128", "-alias"}
+	}
+	
 	if err := exec.Command(cmd, args...).Run(); err != nil {
 		// suppress for now
 		// @todo research alternative to ifconfig
 		// @todo suggest ifconfig or alternative
 		// @todo research libs for interface management
-		//fmt.Println("Cannot ifconfig lo0 -alias " + ip.String() + "\r\n" + err.Error())
+		//fmt.Printf("Cannot ifconfig lo0 %s: %v\n", strings.Join(args[1:], " "), err)
 	}
 }

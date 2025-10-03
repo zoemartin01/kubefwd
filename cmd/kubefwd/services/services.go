@@ -53,6 +53,7 @@ import (
 
 // cmdline arguments
 var namespaces []string
+var excludeNamespaces []string
 var contexts []string
 var verbose bool
 var domain string
@@ -74,6 +75,7 @@ func init() {
 	Cmd.Flags().StringP("kubeconfig", "c", "", "absolute path to a kubectl config file")
 	Cmd.Flags().StringSliceVarP(&contexts, "context", "x", []string{}, "specify a context to override the current context")
 	Cmd.Flags().StringSliceVarP(&namespaces, "namespace", "n", []string{}, "Specify a namespace. Specify multiple namespaces by duplicating this argument.")
+	Cmd.Flags().StringSliceVarP(&excludeNamespaces, "exclude-namespace", "E", []string{}, "Exclude namespaces. Works with --all-namespaces to skip specific namespaces.")
 	Cmd.Flags().StringP("selector", "l", "", "Selector (label query) to filter on; supports '=', '==', and '!=' (e.g. -l key1=value1,key2=value2).")
 	Cmd.Flags().StringP("field-selector", "f", "", "Field selector to filter on; supports '=', '==', and '!=' (e.g. -f metadata.name=service-name).")
 	Cmd.Flags().BoolVarP(&verbose, "verbose", "v", false, "Verbose output.")
@@ -102,8 +104,19 @@ var Cmd = &cobra.Command{
 		"  kubefwd svc -n the-project -m 80:8080 -m 443:1443\n" +
 		"  kubefwd svc -n the-project -z path/to/conf.yml\n" +
 		"  kubefwd svc -n the-project -r svc.ns:127.3.3.1\n" +
-		"  kubefwd svc --all-namespaces",
+		"  kubefwd svc --all-namespaces\n" +
+		"  kubefwd svc -A -E kube-system -E kube-public",
 	Run: runCmd,
+}
+
+// isNamespaceExcluded checks if a namespace should be excluded
+func isNamespaceExcluded(namespace string, excludeList []string) bool {
+	for _, exclude := range excludeList {
+		if namespace == exclude {
+			return true
+		}
+	}
+	return false
 }
 
 // setAllNamespace Form V1Core get all namespace
@@ -118,7 +131,10 @@ func setAllNamespace(clientSet *kubernetes.Clientset, options metav1.ListOptions
 	}
 
 	for _, ns := range nsList.Items {
-		*namespaces = append(*namespaces, ns.Name)
+		// Skip excluded namespaces
+		if !isNamespaceExcluded(ns.Name, excludeNamespaces) {
+			*namespaces = append(*namespaces, ns.Name)
+		}
 	}
 }
 
@@ -317,6 +333,11 @@ Try:
 		clientSet, err := kubernetes.NewForConfig(restConfig)
 		if err != nil {
 			log.Fatalf("Error creating k8s clientSet: %s\n", err.Error())
+		}
+
+		// Validate exclude-namespace usage
+		if len(excludeNamespaces) > 0 && !isAllNs {
+			log.Fatalf("Error: --exclude-namespace can only be used with --all-namespaces.")
 		}
 
 		// if use --all-namespace ,from v1 api get all ns.

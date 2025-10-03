@@ -56,6 +56,7 @@ var namespaces []string
 var contexts []string
 var verbose bool
 var domain string
+var domainRequired bool
 var mappings []string
 var isAllNs bool
 var fwdConfigurationPath string
@@ -77,6 +78,7 @@ func init() {
 	Cmd.Flags().StringP("field-selector", "f", "", "Field selector to filter on; supports '=', '==', and '!=' (e.g. -f metadata.name=service-name).")
 	Cmd.Flags().BoolVarP(&verbose, "verbose", "v", false, "Verbose output.")
 	Cmd.Flags().StringVarP(&domain, "domain", "d", "", "Append a pseudo domain name to generated host names.")
+	Cmd.Flags().BoolVarP(&domainRequired, "domain-required", "D", false, "When domain is specified, only create domain-qualified hostnames (no bare hostnames)")
 	Cmd.Flags().StringSliceVarP(&mappings, "mapping", "m", []string{}, "Specify a port mapping. Specify multiple mapping by duplicating this argument.")
 	Cmd.Flags().BoolVarP(&isAllNs, "all-namespaces", "A", false, "Enable --all-namespaces option like kubectl.")
 	Cmd.Flags().StringSliceVarP(&fwdReservations, "reserve", "r", []string{}, "Specify an IP reservation. Specify multiple reservations by duplicating this argument.")
@@ -356,6 +358,7 @@ Try:
 				ClusterN:          i,
 				NamespaceN:        ii,
 				Domain:            domain,
+				DomainRequired:    domainRequired,
 				ManualStopChannel: stopListenCh,
 				PortMapping:       mappings,
 			}
@@ -405,6 +408,8 @@ type NamespaceOpts struct {
 
 	// Domain is specified by the user and used in place of .local
 	Domain string
+	// DomainRequired when true, only creates domain-qualified hostnames (no bare hostnames)
+	DomainRequired bool
 	// meaning any source port maps to target port.
 	PortMapping []string
 
@@ -475,6 +480,7 @@ func (opts *NamespaceOpts) AddServiceHandler(obj interface{}) {
 		NamespaceN:               opts.NamespaceN,
 		ClusterN:                 opts.ClusterN,
 		Domain:                   opts.Domain,
+		DomainRequired:           opts.DomainRequired,
 		PodLabelSelector:         selector,
 		NamespaceServiceLock:     opts.NamespaceIPLock,
 		Svc:                      svc,

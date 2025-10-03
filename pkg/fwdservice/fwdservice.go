@@ -55,6 +55,8 @@ type ServiceFWD struct {
 
 	// Domain is specified by the user and used in place of .local
 	Domain string
+	// DomainRequired when true, only creates domain-qualified hostnames (no bare hostnames)
+	DomainRequired bool
 
 	PodLabelSelector     string      // The label selector to query for matching pods.
 	NamespaceServiceLock *sync.Mutex //
@@ -326,6 +328,7 @@ func (svcFwd *ServiceFWD) LoopPodsToForward(pods []v1.Pod, includePodNameInHost 
 				ClusterN:   svcFwd.ClusterN,
 				NamespaceN: svcFwd.NamespaceN,
 				Domain:     svcFwd.Domain,
+				DomainRequired: svcFwd.DomainRequired,
 
 				ManualStopChan: make(chan struct{}),
 				DoneChan:       make(chan struct{}),

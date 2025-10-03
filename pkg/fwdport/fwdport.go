@@ -85,6 +85,7 @@ type PortForwardOpts struct {
 	NamespaceN int
 
 	Domain         string
+	DomainRequired bool
 	HostsParams    *HostsParams
 	Hosts          []string
 	ManualStopChan chan struct{} // Send a signal on this to stop the portforwarding
@@ -277,77 +278,153 @@ func (pfo *PortForwardOpts) AddHosts() {
 
 	// bare service name
 	if pfo.ClusterN == 0 && pfo.NamespaceN == 0 {
-		pfo.addHost(pfo.Service)
-
-		if pfo.Domain != "" {
-			pfo.addHost(fmt.Sprintf(
-				"%s.%s",
-				pfo.Service,
-				pfo.Domain,
-			))
+		if pfo.Domain != "" && pfo.DomainRequired {
+			// When domain-required is enabled, only create domain version (mandatory domain)
+			pfo.addHost(fmt.Sprintf("%s.%s", pfo.Service, pfo.Domain))
+		} else {
+			// Create bare hostname (and domain version if domain specified)
+			pfo.addHost(pfo.Service)
+			
+			if pfo.Domain != "" {
+				pfo.addHost(fmt.Sprintf("%s.%s", pfo.Service, pfo.Domain))
+			}
 		}
 	}
 
 	// alternate cluster / first namespace
 	if pfo.ClusterN > 0 && pfo.NamespaceN == 0 {
-		pfo.addHost(fmt.Sprintf(
-			"%s.%s",
-			pfo.Service,
-			pfo.Context,
-		))
+		if pfo.Domain != "" && pfo.DomainRequired {
+			// When domain-required is enabled, create domain version for alternate cluster
+			pfo.addHost(fmt.Sprintf(
+				"%s.%s.%s",
+				pfo.Service,
+				pfo.Context,
+				pfo.Domain,
+			))
+		} else {
+			// Create context hostname (and domain version if domain specified)
+			pfo.addHost(fmt.Sprintf(
+				"%s.%s",
+				pfo.Service,
+				pfo.Context,
+			))
+			
+			if pfo.Domain != "" {
+				pfo.addHost(fmt.Sprintf(
+					"%s.%s.%s",
+					pfo.Service,
+					pfo.Context,
+					pfo.Domain,
+				))
+			}
+		}
 	}
 
 	// namespaced without cluster
 	if pfo.ClusterN == 0 {
-		pfo.addHost(fmt.Sprintf(
-			"%s.%s",
-			pfo.Service,
-			pfo.Namespace,
-		))
+		if pfo.Domain != "" && pfo.DomainRequired {
+			// When domain-required is enabled, create only domain versions (mandatory domain)
+			pfo.addHost(fmt.Sprintf(
+				"%s.%s.%s",
+				pfo.Service,
+				pfo.Namespace,
+				pfo.Domain,
+			))
 
-		pfo.addHost(fmt.Sprintf(
-			"%s.%s.svc",
-			pfo.Service,
-			pfo.Namespace,
-		))
+			pfo.addHost(fmt.Sprintf(
+				"%s.%s.svc.%s",
+				pfo.Service,
+				pfo.Namespace,
+				pfo.Domain,
+			))
 
-		pfo.addHost(fmt.Sprintf(
-			"%s.%s.svc.cluster.local",
-			pfo.Service,
-			pfo.Namespace,
-		))
-
-		if pfo.Domain != "" {
 			pfo.addHost(fmt.Sprintf(
 				"%s.%s.svc.cluster.%s",
 				pfo.Service,
 				pfo.Namespace,
 				pfo.Domain,
 			))
-		}
+		} else {
+			// Create standard hostnames (and domain versions if domain specified)
+			pfo.addHost(fmt.Sprintf(
+				"%s.%s",
+				pfo.Service,
+				pfo.Namespace,
+			))
 
+			pfo.addHost(fmt.Sprintf(
+				"%s.%s.svc",
+				pfo.Service,
+				pfo.Namespace,
+			))
+
+			pfo.addHost(fmt.Sprintf(
+				"%s.%s.svc.cluster.local",
+				pfo.Service,
+				pfo.Namespace,
+			))
+
+			if pfo.Domain != "" {
+				pfo.addHost(fmt.Sprintf(
+					"%s.%s.svc.cluster.%s",
+					pfo.Service,
+					pfo.Namespace,
+					pfo.Domain,
+				))
+			}
+		}
 	}
 
-	pfo.addHost(fmt.Sprintf(
-		"%s.%s.%s",
-		pfo.Service,
-		pfo.Namespace,
-		pfo.Context,
-	))
+	// Skip context hostnames when domain-required is enabled to minimize conflicts
+	if !(pfo.Domain != "" && pfo.DomainRequired) {
+		// Create standard context hostnames (and domain versions if domain specified)
+		pfo.addHost(fmt.Sprintf(
+			"%s.%s.%s",
+			pfo.Service,
+			pfo.Namespace,
+			pfo.Context,
+		))
 
-	pfo.addHost(fmt.Sprintf(
-		"%s.%s.svc.%s",
-		pfo.Service,
-		pfo.Namespace,
-		pfo.Context,
-	))
+		pfo.addHost(fmt.Sprintf(
+			"%s.%s.svc.%s",
+			pfo.Service,
+			pfo.Namespace,
+			pfo.Context,
+		))
 
-	pfo.addHost(fmt.Sprintf(
-		"%s.%s.svc.cluster.%s",
-		pfo.Service,
-		pfo.Namespace,
-		pfo.Context,
-	))
+		pfo.addHost(fmt.Sprintf(
+			"%s.%s.svc.cluster.%s",
+			pfo.Service,
+			pfo.Namespace,
+			pfo.Context,
+		))
+		
+		if pfo.Domain != "" {
+			pfo.addHost(fmt.Sprintf(
+				"%s.%s.%s.%s",
+				pfo.Service,
+				pfo.Namespace,
+				pfo.Context,
+				pfo.Domain,
+			))
+
+			pfo.addHost(fmt.Sprintf(
+				"%s.%s.svc.%s.%s",
+				pfo.Service,
+				pfo.Namespace,
+				pfo.Context,
+				pfo.Domain,
+			))
+
+			pfo.addHost(fmt.Sprintf(
+				"%s.%s.svc.cluster.%s.%s",
+				pfo.Service,
+				pfo.Namespace,
+				pfo.Context,
+				pfo.Domain,
+			))
+		}
+	}
 
 	err := pfo.HostFile.Hosts.Save()
 	if err != nil {

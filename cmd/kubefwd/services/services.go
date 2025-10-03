@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"sync"
 	"syscall"
@@ -60,6 +61,7 @@ var isAllNs bool
 var fwdConfigurationPath string
 var fwdReservations []string
 var timeout int
+var hostsFilePath string
 
 func init() {
 	// override error output from k8s.io/apimachinery/pkg/util/runtime
@@ -80,6 +82,7 @@ func init() {
 	Cmd.Flags().StringSliceVarP(&fwdReservations, "reserve", "r", []string{}, "Specify an IP reservation. Specify multiple reservations by duplicating this argument.")
 	Cmd.Flags().StringVarP(&fwdConfigurationPath, "fwd-conf", "z", "", "Define an IP reservation configuration")
 	Cmd.Flags().IntVarP(&timeout, "timeout", "t", 300, "Specify a timeout seconds for the port forwarding.")
+	Cmd.Flags().StringVarP(&hostsFilePath, "hosts-file", "H", "", "Specify a custom hosts file path (default: /etc/hosts)")
 
 }
 
@@ -179,11 +182,42 @@ Try:
 	}
 
 	log.Println("Press [Ctrl-C] to stop forwarding.")
-	log.Println("'cat /etc/hosts' to see all host entries.")
-
-	hostFile, err := txeh.NewHostsDefault()
-	if err != nil {
-		log.Fatalf("HostFile error: %s", err.Error())
+	
+	var hostFile *txeh.Hosts
+	
+	if hostsFilePath != "" {
+		// Convert relative path to absolute path
+		absHostsPath, err := filepath.Abs(hostsFilePath)
+		if err != nil {
+			log.Fatalf("Error converting hosts file path to absolute: %s", err.Error())
+		}
+		
+		// Create the hosts file if it doesn't exist
+		if _, err := os.Stat(absHostsPath); os.IsNotExist(err) {
+			log.Printf("Creating hosts file: %s", absHostsPath)
+			file, err := os.Create(absHostsPath)
+			if err != nil {
+				log.Fatalf("Error creating hosts file %s: %s", absHostsPath, err.Error())
+			}
+			file.Close()
+		}
+		
+		// Use custom hosts file path
+		hostFile, err = txeh.NewHosts(&txeh.HostsConfig{
+			ReadFilePath:  absHostsPath,
+			WriteFilePath: absHostsPath,
+		})
+		if err != nil {
+			log.Fatalf("HostFile error with custom path %s: %s", absHostsPath, err.Error())
+		}
+		log.Printf("Using custom hosts file: %s", absHostsPath)
+	} else {
+		// Use default /etc/hosts
+		hostFile, err = txeh.NewHostsDefault()
+		if err != nil {
+			log.Fatalf("HostFile error: %s", err.Error())
+		}
+		log.Println("'cat /etc/hosts' to see all host entries.")
 	}
 
 	log.Printf("Loaded hosts file %s\n", hostFile.ReadFilePath)

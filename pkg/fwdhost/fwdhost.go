@@ -5,6 +5,8 @@ import (
 	"io"
 	"log"
 	"os"
+	"path/filepath"
+	"strings"
 
 	"github.com/txn2/txeh"
 )
@@ -17,7 +19,14 @@ func BackupHostFile(hostFile *txeh.Hosts) (string, error) {
 		return "", err
 	}
 
-	backupHostsPath := homeDirLocation + "/hosts.original"
+	// Create a backup filename based on the original file path
+	var backupHostsPath string
+	if hostFile.WriteFilePath == "/etc/hosts" {
+		backupHostsPath = homeDirLocation + "/hosts.original"
+	} else {
+		// For custom hosts files, create backup with a sanitized name
+		backupHostsPath = homeDirLocation + "/kubefwd_hosts_backup_" + sanitizeFilename(hostFile.WriteFilePath)
+	}
 	if _, err := os.Stat(backupHostsPath); os.IsNotExist(err) {
 		from, err := os.Open(hostFile.WriteFilePath)
 		if err != nil {
@@ -39,4 +48,22 @@ func BackupHostFile(hostFile *txeh.Hosts) (string, error) {
 	}
 
 	return fmt.Sprintf("Original hosts backup already exists at %s\n", backupHostsPath), nil
+}
+
+// sanitizeFilename converts a file path to a safe filename for backup purposes
+func sanitizeFilename(path string) string {
+	// Get base filename and replace unsafe characters
+	base := filepath.Base(path)
+	if base == "." || base == "/" || base == "" {
+		base = "custom_hosts"
+	}
+	
+	// Replace path separators and other unsafe characters with underscores
+	unsafe := []string{"/", "\\", ":", "*", "?", "\"", "<", ">", "|", " "}
+	sanitized := base
+	for _, char := range unsafe {
+		sanitized = strings.ReplaceAll(sanitized, char, "_")
+	}
+	
+	return sanitized + ".original"
 }
